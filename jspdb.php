@@ -225,6 +225,26 @@ function bulk_load_data($data) {
     }
 }
 
+// Search for values in a nested array based on a key-value pair
+function findValues($array, $field, $value) {
+    if (!is_array($array)) {
+        return [];
+    }
+
+    $results = [];
+
+    foreach ($array as $key => $val) {
+        if (is_array($val)) {
+            $nestedResults = findValues($val, $field, $value);
+            $results = array_merge($results, $nestedResults);
+        } elseif ($key === $field && $val === $value) {
+            $results[$array['id']] = $array;
+        }
+    }
+
+    return $results;
+}
+
 // Search for records in the database
 function search_records($field, $value) {
     global $db_cache;

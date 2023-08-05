@@ -1,5 +1,4 @@
-# jspdb
-Just Simple Php DataBase
+# Just Simple Php DataBase
 
 1) Plain text file fast data base
 2) Cache

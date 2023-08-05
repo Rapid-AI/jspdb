@@ -121,6 +121,110 @@ function delete_record($id) {
     return true; // Record deleted successfully
 }
 
+
+// Bulk insert records into the database
+function bulk_insert_records($records) {
+    global $db_cache;
+
+    $success_count = 0;
+    $failed_records = [];
+
+    foreach ($records as $record) {
+        $id = $record['id'];
+        $data = $record['data'];
+
+        if (!issetValue($db_cache, $id)) {
+            setValue($db_cache, $id, $data);
+            $success_count++;
+        } else {
+            $failed_records[] = $record;
+        }
+    }
+
+    save_data();
+
+    return [
+        'success_count' => $success_count,
+        'failed_records' => $failed_records
+    ];
+}
+
+// Bulk update records in the database
+function bulk_update_records($records) {
+    global $db_cache;
+
+    $success_count = 0;
+    $failed_records = [];
+
+    foreach ($records as $record) {
+        $id = $record['id'];
+        $data = $record['data'];
+
+        if (issetValue($db_cache, $id)) {
+            setValue($db_cache, $id, $data);
+            $success_count++;
+        } else {
+            $failed_records[] = $record;
+        }
+    }
+
+    save_data();
+
+    return [
+        'success_count' => $success_count,
+        'failed_records' => $failed_records
+    ];
+}
+
+// Bulk delete records from the database
+function bulk_delete_records($ids) {
+    global $db_cache;
+
+    $success_count = 0;
+    $failed_ids = [];
+
+    foreach ($ids as $id) {
+        if (issetValue($db_cache, $id)) {
+            unsetValue($db_cache, $id);
+            $success_count++;
+        } else {
+            $failed_ids[] = $id;
+        }
+    }
+
+    save_data();
+
+    return [
+        'success_count' => $success_count,
+        'failed_ids' => $failed_ids
+    ];
+}
+
+// Bulk load data into the cache
+function bulk_load_data($data) {
+    global $db_cache, $cache_initialized;
+
+    if (!$cache_initialized) {
+        $nestedData = &$db_cache;
+
+        foreach ($data as $record) {
+            $id = $record['id'];
+            $data = $record['data'];
+
+            $keys = explode('.', $id);
+            foreach ($keys as $key) {
+                if (!isset($nestedData[$key])) {
+                    $nestedData[$key] = [];
+                }
+                $nestedData = &$nestedData[$key];
+            }
+            $nestedData = $data;
+        }
+
+        $cache_initialized = true;
+    }
+}
+
 // Search for records in the database
 function search_records($field, $value) {
     global $db_cache;

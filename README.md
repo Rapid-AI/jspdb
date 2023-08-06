@@ -1,5 +1,7 @@
 # Just Simple Php DataBase
 
+You can use it when your hosting is cheap limited or you need simple database with good performance
+
 1) Plain text file fast data base
 2) Cache
 3) Indexing in RAM

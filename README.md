@@ -57,7 +57,8 @@ public function __construct($db_directory)
 So in summary, this class implements all the basic CRUD operations and more for a simple flat file database. The in-memory caching provides good performance, while storing the actual data in flat files keeps it persistent.
 
 
-**#usage
+# Usage examples
+
 1. Creating an instance of the `jspdb` class and initializing it with a directory path:
 
 ```php

@@ -342,8 +342,7 @@ class jspdb
         return $nested_data;
     }
 
-    public function backupDatabase()
-    {
+public function backupDatabase() {
         if (!is_dir($this->db_directory)) {
             mkdir($this->db_directory, 0755, true);
         }
@@ -353,77 +352,34 @@ class jspdb
             mkdir($backup_directory, 0755, true);
         }
 
-        $backup_file = $backup_directory . 'backup_' . date('Y-m-d_H-i-s') . '.zip';
+        $backup_file = $backup_directory . 'backup_' . date('Y-m-d_H-i-s') . '.json';
 
-        $files = glob($this->db_directory . '*.jspb');
+        $data = $this->db_cache;
 
-        $zip = new ZipArchive();
-        if ($zip->open($backup_file, ZipArchive::CREATE | ZipArchive::OVERWRITE)) {
-            foreach ($files as $file) {
-                $zip->addFile($file, basename($file));
-            }
-            $zip->close();
-        }
+        $fp = fopen($backup_file, 'w');
+        fwrite($fp, json_encode($data));
+        fclose($fp);
 
         return $backup_file;
     }
 
-    public function restoreDatabase($backup_file)
-    {
+    public function restoreDatabase($backup_file) {
         if (!is_file($backup_file)) {
             return false;
         }
 
         $this->clearCache();
 
-        $backup_directory = $this->db_directory . 'backup/';
+        $data = file_get_contents($backup_file);
+        $imported_data = json_decode($data, true);
 
-        if (!is_dir($backup_directory)) {
-            mkdir($backup_directory, 0755, true);
+        if (is_array($imported_data)) {
+            $this->db_cache = $imported_data;
+            $this->cache_initialized = true;
+            return true; 
         }
 
-        $extract_path = $backup_directory . 'temp_extract/';
-
-        if (!is_dir($extract_path)) {
-            mkdir($extract_path, 0755, true);
-        }
-
-        $zip = new ZipArchive();
-        if ($zip->open($backup_file) === true) {
-            $zip->extractTo($extract_path);
-            $zip->close();
-        } else {
-            return false;
-        }
-
-        $backup_files = glob($extract_path . '*.jspb');
-
-        foreach ($backup_files as $backup_file) {
-            $handle = fopen($backup_file, 'r');
-
-            if ($handle) {
-                $this->acquireLock($handle, LOCK_EX);
-
-                while (!feof($handle)) {
-                    $line = fgets($handle);
-                    $data = json_decode($line, true);
-
-                    if ($data) {
-                        $id = $data['id'];
-                        $this->setValue($this->db_cache, $id, $data);
-                    }
-                }
-
-                $this->releaseLock($handle);
-                fclose($handle);
-            }
-        }
-
-        $this->cache_initialized = true;
-
-        $this->deleteDirectory($extract_path);
-
-        return true;
+        return false;
     }
 
     private function deleteDirectory($dir) {

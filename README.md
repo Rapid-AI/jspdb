@@ -8,62 +8,133 @@
 6) Data validation included
 
 # Description
-This code is a PHP implementation of a simple flat file database system. It allows you to perform CRUD (Create, Read, Update, Delete) operations on data stored in flat files.
+This class implements a simple flat file database. It stores data in JSON format in individual .jspb files. The data is cached in memory for performance.
 
-The code consists of several functions:
+- The constructor accepts a database directory where the files will be stored.
 
-1. load_data(): This function loads data from the database files into the $db_cache array. It reads each line of the file, decodes it from JSON format, and stores it in the appropriate nested array structure based on the ID.
+```php
+public function __construct($db_directory) 
+```
 
-2. save_data(): This function saves the data from the $db_cache array back into the database files. It flattens the nested array structure using the flattenArray() helper function, then writes each record as a line of JSON data into the corresponding file.
+- `load()` loads all data files into the in-memory cache.
 
-3. flattenArray(): This helper function recursively flattens a nested array into a single-level associative array. It prefixes each key with the parent keys separated by a dot (.).
+- `save()` saves the in-memory cache to the data files.
 
-4. insert_record(): This function inserts a new record into the database. It checks if the ID already exists in the $db_cache array and returns false if it does. Otherwise, it adds the new record to the $db_cache array, saves the data to the files using save_data(), and returns true.
+- `insertRecord()`, `updateRecord()` and `deleteRecord()` manipulate single records.
 
-5. update_record(): This function updates an existing record in the database. It checks if the ID exists in the $db_cache array and returns false if it doesn't. Otherwise, it updates the record in the $db_cache array, saves the data to the files using save_data(), and returns true.
+- `bulkInsertRecords()`, `bulkUpdateRecords()` and `bulkDeleteRecords()` operate on multiple records.
 
-6. delete_record(): This function deletes a record from the database. It checks if the ID exists in the $db_cache array and returns false if it doesn't. Otherwise, it removes the record from the $db_cache array, saves the data to the files using save_data(), and returns true.
+- `searchRecords()` searches by a field and value.
 
-7. search_records(): This function searches for records in the database based on a specific field and value. It returns an associative array of matching records.
+- `sortRecords()` sorts the records by a field.
 
-8. sort_records(): This function sorts the records in the database based on a specific field and order. It returns a nested array of sorted records.
+- `aggregateRecords()` performs aggregate functions.
 
-9. aggregate_records(): This function performs aggregation operations (sum, average, minimum, maximum) on a specific field in the database. It returns the result of the aggregation operation.
+- `paginateRecords()` paginates the records.
 
-10. paginate_records(): This function provides pagination for the records in the database. It takes a page number and a limit as parameters and returns a nested array of records for the specified page.
+- `backupDatabase()` and `restoreDatabase()` backup and restore the database.
 
-11. backup_database(): This function creates a backup of the database files by copying them to a backup directory with a timestamp appended to the filename.
+- `clearCache()` empties the in-memory cache.
 
-12. restore_database(): This function restores the database from backup files by copying them back to the original database directory.
+- There are many utility methods to get information from the database:
+    - `countRecords()` 
+    - `getRecordIds()`
+    - `getRecordKeys()`
+    - `getRecordValues()`
+    - `getFieldDistinctValues()` 
+    - etc.
 
-13. latest_backup(): This function finds the latest backup file for a given database file.
+- The database can be exported and imported using `exportDatabase()` and `importDatabase()`.
 
-14. validate_data(): This function is a placeholder for additional data validation logic. It currently allows any plain text data without any validation.
+- Fields can be renamed using `renameField()` and `renameRecordKey()`.
 
-15. create_index(): This function creates an index on a specific field in the database. It returns a nested array structure where the keys are unique field values and the values are arrays of records.
+- Records can be sorted, searched, and manipulated in various ways.
 
-The code also includes several helper functions (issetValue(), setValue(), unsetValue(), getValue()) that perform operations on nested arrays, such as checking if a key exists, setting a value, unsetting a value, and getting a value.
+- The database can be exported to CSV using `exportCsv()` and imported from CSV using `importCsv()`.
 
-# In the bulk versions of the functions:
-1. bulk_insert_records takes an array of records as input and attempts to insert each record into the database. It returns the number of successful insertions and an array of records that failed to be inserted.
-2. bulk_update_records takes an array of records as input and attempts to update each record in the database. It returns the number of successful updates and an array of records that failed to be updated.
-3. bulk_delete_records takes an array of record IDs as input and attempts to delete each record from the database. It returns the number of successful deletions and an array of record IDs that failed to be deleted.
-4. bulk_load_data takes an array of records as input and loads them into the cache in a bulk manner. This can be more efficient than loading data from files individually.
+So in summary, this class implements all the basic CRUD operations and more for a simple flat file database. The in-memory caching provides good performance, while storing the actual data in flat files keeps it persistent.
 
 
 **#usage
-1) Create directory for storage out of "web" folder and modify $db_directory = '/YOUR_DIR/';
-2) include 'jspdb.php'; //in your php file
-3) insert_record($id, $data)
-4) update_record($id, $data)
-5) delete_record($id)
-6) search_records($field, $value)
-7) sort_records($field, $order = 'asc')
-8) aggregate_records($field, $operation) - sum, average, minimum, maximum
-9) paginate_records($page, $limit = 10)
-10) backup_database()
-11) restore_database()
-12) latest_backup($db_file)
-13) create_index($field) - usefull for tables and another views
+1. Creating an instance of the `jspdb` class and initializing it with a directory path:
 
-Usage examples will be available later
+```php
+$database = new jspdb('/path/to/database/directory/');
+```
+
+2. Loading the database records from files into the cache:
+
+```php
+$database->load();
+```
+
+3. Inserting a new record into the database:
+
+```php
+$id = 'record1';
+$data = ['name' => 'John Doe', 'age' => 30];
+$success = $database->insertRecord($id, $data);
+if ($success) {
+    echo "Record inserted successfully.";
+} else {
+    echo "Failed to insert record.";
+}
+```
+
+4. Updating an existing record in the database:
+
+```php
+$id = 'record1';
+$newData = ['name' => 'Jane Smith', 'age' => 35];
+$success = $database->updateRecord($id, $newData);
+if ($success) {
+    echo "Record updated successfully.";
+} else {
+    echo "Failed to update record.";
+}
+```
+
+5. Deleting a record from the database:
+
+```php
+$id = 'record1';
+$success = $database->deleteRecord($id);
+if ($success) {
+    echo "Record deleted successfully.";
+} else {
+    echo "Failed to delete record.";
+}
+```
+
+6. Searching for records with a specific field value:
+
+```php
+$field = 'age';
+$value = 30;
+$results = $database->searchRecords($field, $value);
+echo "Found " . count($results) . " records matching the search criteria.";
+```
+
+7. Sorting records by a specific field:
+
+```php
+$field = 'name';
+$order = 'asc'; // 'asc' for ascending order, 'desc' for descending order
+$sortedData = $database->sortRecords($field, $order);
+if (!$sortedData) {
+    echo "Failed to sort records.";
+} else {
+    foreach ($sortedData as $id => $record) {
+        echo "Record ID: $id, Name: " . $record['name'] . ", Age: " . $record['age'] . "<br>";
+    }
+}
+```
+
+8. Counting the total number of records in the database:
+
+```php
+$count = $database->countRecords();
+echo "Total records: $count";
+```
+
+These are just a few examples of what you can do with the `jspdb` class. You can explore the remaining methods in the class and experiment with different use cases based on your specific requirements.

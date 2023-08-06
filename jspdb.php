@@ -1,482 +1,798 @@
-<?php
-// Connect to the flat file database
-$db_directory = 'data/';
+<?
 
-// Initialize a cache for users data
-$db_cache = [];
+class jspdb
+{
+    private $db_directory;
+    private $db_cache;
+    private $cache_initialized;
 
-// Cache initialization flag
-$cache_initialized = false;
+    public function __construct($db_directory)
+    {
+        $this->db_directory = $db_directory;
+        $this->db_cache = [];
+        $this->cache_initialized = false;
+    }
+  
+  	private function acquireLock($handle, $lockType)
+    {
+        flock($handle, $lockType);
+    }
 
-// Load users data from files into cache
-function load_data() {
-    global $db_directory, $db_cache, $cache_initialized;
+    private function releaseLock($handle)
+    {
+        flock($handle, LOCK_UN);
+    }
 
-    if (!$cache_initialized) {
-        $files = glob($db_directory . '*.jspdb');
+    private function flattenArray($array)
+    {
+        $result = [];
+        $stack = [[$array, '']];
 
-        foreach ($files as $file) {
-            $handle = fopen($file, 'r');
+        while (!empty($stack)) {
+            [$data, $prefix] = array_pop($stack);
+
+            foreach ($data as $key => $value) {
+                $newKey = ($prefix ? $prefix . '.' . $key : $key);
+
+                if (is_array($value)) {
+                    $stack[] = [$value, $newKey];
+                } else {
+                    $result[$newKey] = $value;
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    private function issetValue(&$array, $key)
+    {
+        $keys = explode('.', $key);
+        $data = &$array;
+
+        foreach ($keys as $key) {
+            if (!isset($data[$key])) {
+                return false;
+            }
+
+            $data = &$data[$key];
+        }
+
+        return true;
+    }
+
+    private function setValue(&$array, $key, $value)
+    {
+        $keys = explode('.', $key);
+        $data = &$array;
+
+        foreach ($keys as $key) {
+            if (!isset($data[$key])) {
+                $data[$key] = [];
+            }
+
+            $data = &$data[$key];
+        }
+
+        $data = $value;
+    }
+
+    private function unsetValue(&$array, $key)
+    {
+        $keys = explode('.', $key);
+        $data = &$array;
+
+        foreach ($keys as $key) {
+            $data = &$data[$key];
+        }
+
+        unset($data);
+    }
+
+    private function getValue($array, $key)
+    {
+        $keys = explode('.', $key);
+        $data = $array;
+
+        foreach ($keys as $key) {
+            if (!isset($data[$key])) {
+                return null;
+            }
+
+            $data = $data[$key];
+        }
+
+        return $data;
+    }
+
+    public function load()
+    {
+        if (!$this->cache_initialized) {
+            $files = glob($this->db_directory . '*.jspdb');
+
+            foreach ($files as $file) {
+                $handle = fopen($file, 'r');
+
+                if ($handle) {
+                    $this->acquireLock($handle, LOCK_SH);
+
+                    while (!feof($handle)) {
+                        $line = fgets($handle);
+                        $data = json_decode($line, true);
+
+                        if ($data) {
+                            $id = $data['id'];
+                            $this->setValue($this->db_cache, $id, $data);
+                        }
+                    }
+
+                    $this->releaseLock($handle);
+                    fclose($handle);
+                }
+            }
+
+            $this->cache_initialized = true;
+        }
+    }
+
+    public function save()
+    {
+        $flattened_data = $this->flattenArray($this->db_cache);
+
+        foreach ($flattened_data as $id => $data) {
+            $file_path = $this->db_directory . str_replace('.', '/', $id) . '.jspb';
+            $handle = fopen($file_path, 'w');
 
             if ($handle) {
+                $this->acquireLock($handle, LOCK_EX);
+
+                fwrite($handle, json_encode($data) . "\n");
+                fclose($handle);
+
+                $this->releaseLock($handle);
+            }
+        }
+    }
+
+    public function insertRecord($id, $data)
+    {
+        if ($this->issetValue($this->db_cache, $id)) {
+            return false;
+        }
+
+        $this->setValue($this->db_cache, $id, $data);
+
+        return true;
+    }
+
+    public function updateRecord($id, $data)
+    {
+        if (!$this->issetValue($this->db_cache, $id)) {
+            return false;
+        }
+
+        $this->setValue($this->db_cache, $id, $data);
+
+        return true;
+    }
+
+    public function deleteRecord($id)
+    {
+        if (!$this->issetValue($this->db_cache, $id)) {
+            return false;
+        }
+
+        $this->unsetValue($this->db_cache, $id);
+
+        return true;
+    }
+
+    public function bulkInsertRecords($records)
+    {
+        $success_count = 0;
+        $failed_records = [];
+
+        foreach ($records as $record) {
+            $id = $record['id'];
+            $data = $record['data'];
+
+            if (!$this->issetValue($this->db_cache, $id)) {
+                $this->setValue($this->db_cache, $id, $data);
+                $success_count++;
+            } else {
+                $failed_records[] = $record;
+            }
+        }
+
+        return [
+            'success_count' => $success_count,
+            'failed_records' => $failed_records,
+        ];
+    }
+
+    public function bulkUpdateRecords($records)
+    {
+        $success_count = 0;
+        $failed_records = [];
+
+        foreach ($records as $record) {
+            $id = $record['id'];
+            $data = $record['data'];
+
+            if ($this->issetValue($this->db_cache, $id)) {
+                $this->setValue($this->db_cache, $id, $data);
+                $success_count++;
+            } else {
+                $failed_records[] = $record;
+            }
+        }
+
+        return [
+            'success_count' => $success_count,
+            'failed_records' => $failed_records,
+        ];
+    }
+
+    public function bulkDeleteRecords($ids)
+    {
+        $success_count = 0;
+        $failed_ids = [];
+
+        foreach ($ids as $id) {
+            if ($this->issetValue($this->db_cache, $id)) {
+                $this->unsetValue($this->db_cache, $id);
+                $success_count++;
+            } else {
+                $failed_ids[] = $id;
+            }
+        }
+
+        return [
+            'success_count' => $success_count,
+            'failed_ids' => $failed_ids,
+        ];
+    }
+
+    public function searchRecords($field, $value)
+    {
+        $results = [];
+
+        $this->findValues($this->db_cache, $field, $value, $results);
+
+        return $results;
+    }
+
+    private function findValues($array, $field, $value, &$results)
+    {
+        if (!is_array($array)) {
+            return;
+        }
+
+        foreach ($array as $key => $val) {
+            if (is_array($val)) {
+                $this->findValues($val, $field, $value, $results);
+            } elseif ($key === $field && $val === $value) {
+                $results[$array['id']] = $array;
+            }
+        }
+    }
+
+    public function sortRecords($field, $order = 'asc')
+    {
+        if (!$this->issetValue($this->db_cache, $field)) {
+            return false;
+        }
+
+        $sort_order = ($order == 'desc') ? SORT_DESC : SORT_ASC;
+
+        $sorted_data = array_column($this->flattenArray($this->db_cache), null, $field);
+
+        array_multisort(array_column($sorted_data, $field), $sort_order, $sorted_data);
+
+        $nested_data = [];
+        foreach ($sorted_data as $id => $data) {
+            $this->setValue($nested_data, $id, $data);
+        }
+
+        return $nested_data;
+    }
+
+    public function aggregateRecords($field, $operation)
+    {
+        if (!$this->issetValue($this->db_cache, $field)) {
+            return false;
+        }
+
+        $values = array_column($this->flattenArray($this->db_cache), $field);
+
+        switch ($operation) {
+            case 'sum':
+                return array_sum($values);
+            case 'average':
+                return array_sum($values) / count($values);
+            case 'minimum':
+                return min($values);
+            case 'maximum':
+                return max($values);
+            default:
+                return false;
+        }
+    }
+
+    public function paginateRecords($page, $limit = 10)
+    {
+        $flattened_data = $this->flattenArray($this->db_cache);
+        $total_records = count($flattened_data);
+        $total_pages = ceil($total_records / $limit);
+
+        if ($page < 1 || $page > $total_pages) {
+            return false;
+        }
+
+        $start = ($page - 1) * $limit;
+        $end = $start + $limit;
+
+        $paged_data = array_slice($flattened_data, $start, $limit);
+
+        $nested_data = [];
+        foreach ($paged_data as $id => $data) {
+            $this->setValue($nested_data, $id, $data);
+        }
+
+        return $nested_data;
+    }
+
+    public function backupDatabase()
+    {
+        if (!is_dir($this->db_directory)) {
+            mkdir($this->db_directory, 0755, true);
+        }
+
+        $backup_directory = $this->db_directory . 'backup/';
+        if (!is_dir($backup_directory)) {
+            mkdir($backup_directory, 0755, true);
+        }
+
+        $backup_file = $backup_directory . 'backup_' . date('Y-m-d_H-i-s') . '.zip';
+
+        $files = glob($this->db_directory . '*.jspb');
+
+        $zip = new ZipArchive();
+        if ($zip->open($backup_file, ZipArchive::CREATE | ZipArchive::OVERWRITE)) {
+            foreach ($files as $file) {
+                $zip->addFile($file, basename($file));
+            }
+            $zip->close();
+        }
+
+        return $backup_file;
+    }
+
+    public function restoreDatabase($backup_file)
+    {
+        if (!is_file($backup_file)) {
+            return false;
+        }
+
+        $this->clearCache();
+
+        $backup_directory = $this->db_directory . 'backup/';
+
+        if (!is_dir($backup_directory)) {
+            mkdir($backup_directory, 0755, true);
+        }
+
+        $extract_path = $backup_directory . 'temp_extract/';
+
+        if (!is_dir($extract_path)) {
+            mkdir($extract_path, 0755, true);
+        }
+
+        $zip = new ZipArchive();
+        if ($zip->open($backup_file) === true) {
+            $zip->extractTo($extract_path);
+            $zip->close();
+        } else {
+            return false;
+        }
+
+        $backup_files = glob($extract_path . '*.jspb');
+
+        foreach ($backup_files as $backup_file) {
+            $handle = fopen($backup_file, 'r');
+
+            if ($handle) {
+                $this->acquireLock($handle, LOCK_EX);
+
                 while (!feof($handle)) {
                     $line = fgets($handle);
                     $data = json_decode($line, true);
 
                     if ($data) {
-                        $nestedData = &$db_cache;
-                        $keys = explode('.', $data['id']);
-                        foreach ($keys as $key) {
-                            if (!isset($nestedData[$key])) {
-                                $nestedData[$key] = [];
-                            }
-                            $nestedData = &$nestedData[$key];
-                        }
-                        $nestedData = $data;
+                        $id = $data['id'];
+                        $this->setValue($this->db_cache, $id, $data);
                     }
                 }
 
+                $this->releaseLock($handle);
                 fclose($handle);
             }
         }
 
-        $cache_initialized = true;
+        $this->cache_initialized = true;
+
+        $this->deleteDirectory($extract_path);
+
+        return true;
     }
-}
 
-// Save users data from cache to files
-function save_data() {
-    global $db_directory, $db_cache;
-
-    foreach (flattenArray($db_cache) as $id => $data) {
-        $file_path = $db_directory . str_replace('.', '/', $id) . '.jspdb';
-        $handle = fopen($file_path, 'w');
-
-        if ($handle) {
-            fwrite($handle, json_encode($data) . "\n");
-            fclose($handle);
+    private function deleteDirectory($dir) {
+        if (!$dh = @opendir($dir)) {
+            return;
         }
-    }
-}
 
-// Helper function to flatten the nested array
-function flattenArray($array, $prefix = '') {
-    $result = [];
-    foreach ($array as $key => $value) {
-        $newKey = ($prefix ? $prefix . '.' . $key : $key);
-        if (is_array($value)) {
-            $result += flattenArray($value, $newKey);
-        } else {
-            $result[$newKey] = $value;
-        }
-    }
-    return $result;
-}
-
-// Insert a new record into the database
-function insert_record($id, $data) {
-    global $db_cache;
-
-    // Check if ID already exists
-    if (issetValue($db_cache, $id)) {
-        return false; // ID already exists, record not inserted
-    }
-
-    setValue($db_cache, $id, $data);
-
-    save_data();
-
-    return true; // Record inserted successfully
-}
-
-// Update an existing record in the database
-function update_record($id, $data) {
-    global $db_cache;
-
-    // Check if ID exists
-    if (!issetValue($db_cache, $id)) {
-        return false; // ID does not exist, record not updated
-    }
-
-    setValue($db_cache, $id, $data);
-
-    save_data();
-
-    return true; // Record updated successfully
-}
-
-// Delete a record from the database
-function delete_record($id) {
-    global $db_cache;
-
-    // Check if ID exists
-    if (!issetValue($db_cache, $id)) {
-        return false; // ID does not exist, record not deleted
-    }
-
-    unsetValue($db_cache, $id);
-
-    save_data();
-
-    return true; // Record deleted successfully
-}
-
-
-// Bulk insert records into the database
-function bulk_insert_records($records) {
-    global $db_cache;
-
-    $success_count = 0;
-    $failed_records = [];
-
-    foreach ($records as $record) {
-        $id = $record['id'];
-        $data = $record['data'];
-
-        if (!issetValue($db_cache, $id)) {
-            setValue($db_cache, $id, $data);
-            $success_count++;
-        } else {
-            $failed_records[] = $record;
-        }
-    }
-
-    save_data();
-
-    return [
-        'success_count' => $success_count,
-        'failed_records' => $failed_records
-    ];
-}
-
-// Bulk update records in the database
-function bulk_update_records($records) {
-    global $db_cache;
-
-    $success_count = 0;
-    $failed_records = [];
-
-    foreach ($records as $record) {
-        $id = $record['id'];
-        $data = $record['data'];
-
-        if (issetValue($db_cache, $id)) {
-            setValue($db_cache, $id, $data);
-            $success_count++;
-        } else {
-            $failed_records[] = $record;
-        }
-    }
-
-    save_data();
-
-    return [
-        'success_count' => $success_count,
-        'failed_records' => $failed_records
-    ];
-}
-
-// Bulk delete records from the database
-function bulk_delete_records($ids) {
-    global $db_cache;
-
-    $success_count = 0;
-    $failed_ids = [];
-
-    foreach ($ids as $id) {
-        if (issetValue($db_cache, $id)) {
-            unsetValue($db_cache, $id);
-            $success_count++;
-        } else {
-            $failed_ids[] = $id;
-        }
-    }
-
-    save_data();
-
-    return [
-        'success_count' => $success_count,
-        'failed_ids' => $failed_ids
-    ];
-}
-
-// Bulk load data into the cache
-function bulk_load_data($data) {
-    global $db_cache, $cache_initialized;
-
-    if (!$cache_initialized) {
-        $nestedData = &$db_cache;
-
-        foreach ($data as $record) {
-            $id = $record['id'];
-            $data = $record['data'];
-
-            $keys = explode('.', $id);
-            foreach ($keys as $key) {
-                if (!isset($nestedData[$key])) {
-                    $nestedData[$key] = [];
-                }
-                $nestedData = &$nestedData[$key];
+        while (false !== ($obj = readdir($dh))) {
+            if ($obj === '.' || $obj === '..') {
+                continue;
             }
-            $nestedData = $data;
+
+            if (!@unlink($dir . '/' . $obj)) {
+                $this->deleteDirectory($dir . '/' . $obj);
+            }
         }
 
-        $cache_initialized = true;
-    }
-}
-
-// Search for values in a nested array based on a key-value pair
-function findValues($array, $field, $value) {
-    if (!is_array($array)) {
-        return [];
+        closedir($dh);
+        @rmdir($dir);
     }
 
-    $results = [];
+    public function clearCache()
+    {
+        $this->db_cache = [];
+        $this->cache_initialized = false;
+    }
 
-    foreach ($array as $key => $val) {
-        if (is_array($val)) {
-            $nestedResults = findValues($val, $field, $value);
-            $results = array_merge($results, $nestedResults);
-        } elseif ($key === $field && $val === $value) {
-            $results[$array['id']] = $array;
+    public function countRecords()
+    {
+        $flattened_data = $this->flattenArray($this->db_cache);
+        return count($flattened_data);
+    }
+
+    public function getRecordIds()
+    {
+        $flattened_data = $this->flattenArray($this->db_cache);
+        return array_keys($flattened_data);
+    }
+
+    public function getRecordKeys($id)
+    {
+        if (!$this->issetValue($this->db_cache, $id)) {
+            return false;
+        }
+
+        $flattened_data = $this->flattenArray($this->db_cache[$id]);
+        return array_keys($flattened_data);
+    }
+
+    public function getRecordValues($id)
+    {
+        if (!$this->issetValue($this->db_cache, $id)) {
+            return false;
+        }
+
+        $flattened_data = $this->flattenArray($this->db_cache[$id]);
+        return array_values($flattened_data);
+    }
+
+    public function getFieldDistinctValues($field)
+    {
+        $distinct_values = [];
+
+        $this->findDistinctValues($this->db_cache, $field, $distinct_values);
+
+        return $distinct_values;
+    }
+
+    private function findDistinctValues($array, $field, &$distinct_values)
+    {
+        if (!is_array($array)) {
+            return;
+        }
+
+        foreach ($array as $key => $value) {
+            if ($key === $field) {
+                if (!in_array($value, $distinct_values)) {
+                    $distinct_values[] = $value;
+                }
+            }
+
+            if (is_array($value)) {
+                $this->findDistinctValues($value, $field, $distinct_values);
+            }
         }
     }
 
-    return $results;
-}
+    public function flushDatabase()
+    {
+        $this->clearCache();
 
-// Search for records in the database
-function search_records($field, $value) {
-    global $db_cache;
+        $files = glob($this->db_directory . '*.jspb');
 
-    $results = [];
-
-    foreach (findValues($db_cache, $field, $value) as $id => $data) {
-        $results[$id] = $data;
-    }
-
-    return $results;
-}
-
-// Sort records in the database
-function sort_records($field, $order = 'asc') {
-    global $db_cache;
-
-    // Check if field exists
-    if (!issetValue($db_cache, $field)) {
-        return false; // Field does not exist, cannot sort
-    }
-
-    $sort_order = ($order == 'desc') ? SORT_DESC : SORT_ASC;
-
-    $sorted_data = array_column(flattenArray($db_cache), null, $field);
-
-    array_multisort(array_column($sorted_data, $field), $sort_order, $sorted_data);
-
-    $nested_data = [];
-    foreach ($sorted_data as $id => $data) {
-        setValue($nested_data, $id, $data);
-    }
-
-    return $nested_data;
-}
-
-// Aggregate records in the database
-function aggregate_records($field, $operation) {
-    global $db_cache;
-
-    // Check if field exists
-    if (!issetValue($db_cache, $field)) {
-        return false; // Field does not exist, cannot aggregate
-    }
-
-    $values = array_column(flattenArray($db_cache), $field);
-
-    switch ($operation) {
-        case 'sum':
-            return array_sum($values);
-        case 'average':
-            return array_sum($values) / count($values);
-        case 'minimum':
-            return min($values);
-        case 'maximum':
-            return max($values);
-        default:
-            return false; // Invalid operation
-    }
-}
-
-// Pagination
-function paginate_records($page, $limit = 10) {
-    global $db_cache;
-
-    $flattened_data = flattenArray($db_cache);
-    $total_records = count($flattened_data);
-    $total_pages = ceil($total_records / $limit);
-
-    if ($page < 1 || $page > $total_pages) {
-        return false; // Invalid page number
-    }
-
-    $start = ($page - 1) * $limit;
-    $end = $start + $limit;
-
-    $paged_data = array_slice($flattened_data, $start, $limit);
-
-    $nested_data = [];
-    foreach ($paged_data as $id => $data) {
-        setValue($nested_data, $id, $data);
-    }
-
-    return $nested_data;
-}
-
-// Backup the database
-function backup_database() {
-    global $db_directory;
-
-    // Create a backup directory if it doesn't exist
-    if (!is_dir($db_directory)) {
-        mkdir($db_directory);
-    }
-
-    $timestamp = date('YmdHis');
-
-    $files = glob($db_directory . '*.jspdb');
-
-    foreach ($files as $file) {
-        $backup_file = $db_directory . 'backup_' . basename($file, '.jspb') . '_' . $timestamp . '.jspb';
-
-        // Copy the database file to the backup location
-        copy($file, $backup_file);
-    }
-
-    return true;
-}
-
-// Restore the database from backup files
-function restore_database() {
-    global $db_directory, $db_cache, $cache_initialized;
-
-    $backup_files = glob($db_directory . 'backup_*.jspb');
-
-    foreach ($backup_files as $backup_file) {
-        $file_path = $db_directory . basename($backup_file);
-
-        // Check if backup file exists
-        if (!file_exists($backup_file)) {
-            return false; // Backup file not found
+        foreach ($files as $file) {
+            if (is_file($file)) {
+                unlink($file);
+            }
         }
 
-        // Restore the database file from the backup
-        copy($backup_file, $file_path);
+        return true;
     }
 
-    // Clear the cache and load data from files
-    $db_cache = [];
-    $cache_initialized = false;
+    public function getFieldRecords($field, $value)
+    {
+        $field_records = [];
 
-    load_data();
+        $this->findFieldRecords($this->db_cache, $field, $value, $field_records);
 
-    return true; // Database restored successfully
-}
-
-// Get the latest backup file for a given database file
-function latest_backup($db_file) {
-    global $db_directory;
-
-    $backup_files = glob($db_directory . 'backup_*_' . $db_file);
-
-    if (empty($backup_files)) {
-        return false; // No backup files found
+        return $field_records;
     }
 
-    // Sort the backup files by timestamp in descending order
-    rsort($backup_files);
+    private function findFieldRecords($array, $field, $value, &$field_records)
+    {
+        if (!is_array($array)) {
+            return;
+        }
 
-    return $backup_files[0];
-}
+        foreach ($array as $key => $record) {
+            if (isset($record[$field]) && $record[$field] === $value) {
+                $field_records[] = $record;
+            }
 
-function validate_data($data) {
-    // Convert data to string if it is not already
-    if (!is_string($data)) {
-        $data = strval($data);
+            if (is_array($record)) {
+                $this->findFieldRecords($record, $field, $value, $field_records);
+            }
+        }
     }
 
-    // Check if the data is a string (plain text)
-    if (!is_string($data)) {
+    public function exportDatabase($file_path)
+    {
+        $this->save();
+
+        $export_data = json_encode($this->db_cache);
+
+        if (file_put_contents($file_path, $export_data)) {
+            return true;
+        }
+
         return false;
     }
 
-    // Add any additional validation logic for plain text data
-
-    // Return true if the data meets the required criteria
-    return true;
-}
-
-
-// Indexing
-function create_index($field) {
-    global $db_cache;
-
-    $indexed_data = [];
-
-    foreach (flattenArray($db_cache) as $id => $data) {
-        $value = getValue($data, $field);
-
-        if (!isset($indexed_data[$value])) {
-            $indexed_data[$value] = [];
-        }
-
-        setValue($indexed_data[$value], $id, $data);
-    }
-
-    return $indexed_data;
-}
-
-// Helper function to check if a key exists in a nested array
-function issetValue(&$array, $key) {
-    $keys = explode('.', $key);
-    foreach ($keys as $key) {
-        if (!isset($array[$key])) {
+    public function importDatabase($file_path)
+    {
+        if (!file_exists($file_path)) {
             return false;
         }
-        $array = &$array[$key];
-    }
-    return true;
-}
 
-// Helper function to set a value in a nested array
-function setValue(&$array, $key, $value) {
-    $keys = explode('.', $key);
-    $lastKey = array_pop($keys);
-    foreach ($keys as $k) {
-        if (!isset($array[$k])) { 
-            $array[$k] = []; 
-        } 
-        $array = &$array[$k]; 
-    }
-    $array[$lastKey] = $value;
-}
+        $import_data = file_get_contents($file_path);
+        $imported_db_cache = json_decode($import_data, true);
 
-// Helper function to unset a value in a nested array
-function unsetValue(&$array, $key) {
-    $keys = explode('.', $key);
-    $lastKey = array_pop($keys);
-    foreach ($keys as $k) {
-        $array = &$array[$k];
-    }
-    unset($array[$lastKey]);
-}
+        if (is_array($imported_db_cache)) {
+            $this->db_cache = $imported_db_cache;
+            $this->cache_initialized = true;
+            return true;
+        }
 
-// Helper function to get a value from a nested array 
-function getValue($array, $key) {
-    $keys = explode('.', $key);
-    foreach ($keys as $k) {
-        if (!isset($array[$k])) {
+        return false;
+    }
+
+    public function renameField($id, $oldField, $newField)
+    {
+        if (!$this->issetValue($this->db_cache, $id) || !$this->issetValue($this->db_cache[$id], $oldField)) {
+            return false;
+        }
+
+        $value = $this->getValue($this->db_cache[$id], $oldField);
+        $this->unsetValue($this->db_cache[$id], $oldField);
+        $this->setValue($this->db_cache[$id], $newField, $value);
+
+        return true;
+    }
+
+    public function renameRecordKey($oldId, $newId)
+    {
+        if (!$this->issetValue($this->db_cache, $oldId)) {
+            return false;
+        }
+
+        $record = $this->db_cache[$oldId];
+        $this->unsetValue($this->db_cache, $oldId);
+        $this->setValue($this->db_cache, $newId, $record);
+
+        return true;
+    }
+
+    public function incrementFieldValue($id, $field, $amount = 1)
+    {
+        if (!$this->issetValue($this->db_cache, $id) || !$this->issetValue($this->db_cache[$id], $field)) {
+            return false;
+        }
+
+        $value = $this->getValue($this->db_cache[$id], $field);
+        if (!is_numeric($value)) {
+            return false;
+        }
+
+        $value += $amount;
+        $this->setValue($this->db_cache[$id], $field, $value);
+
+        return true;
+    }
+
+    public function decrementFieldValue($id, $field, $amount = 1)
+    {
+        return $this->incrementFieldValue($id, $field, -$amount);
+    }
+
+    public function sortByField($field, $order = 'asc')
+    {
+        $this->validateSortOrder($order);
+
+        $sorted_data = $this->db_cache;
+        uasort($sorted_data, function ($a, $b) use ($field, $order) {
+            $valueA = $this->getValue($a, $field);
+            $valueB = $this->getValue($b, $field);
+
+            if ($valueA == $valueB) {
+                return 0;
+            }
+
+            if ($order === 'asc') {
+                return ($valueA < $valueB) ? -1 : 1;
+            } else {
+                return ($valueA > $valueB) ? -1 : 1;
+            }
+        });
+
+        return $sorted_data;
+    }
+
+    private function validateSortOrder($order)
+    {
+        $validOrders = ['asc', 'desc'];
+        if (!in_array($order, $validOrders)) {
+            throw new InvalidArgumentException("Invalid sort order. Valid values are 'asc' or 'desc'.");
+        }
+    }
+
+    public function searchByField($field, $value)
+    {
+        $matching_records = [];
+
+        $this->findMatchingRecords($this->db_cache, $field, $value, $matching_records);
+
+        return $matching_records;
+    }
+
+    private function findMatchingRecords($array, $field, $value, &$matching_records)
+    {
+        if (!is_array($array)) {
+            return;
+        }
+
+        foreach ($array as $record) {
+            if (isset($record[$field]) && $record[$field] === $value) {
+                $matching_records[] = $record;
+            }
+
+            foreach ($record as $key => $value) {
+                if (is_array($value)) {
+                    $this->findMatchingRecords($value, $field, $value, $matching_records);
+                }
+            }
+        }
+    }
+
+    public function exportCsv($file_path)
+    {
+        $this->save();
+
+        $file = fopen($file_path, 'w');
+
+        if (!$file) {
+            return false;
+        }
+
+        $header = [];
+        $data = [];
+
+        // Extract header fields from the first record in the database cache
+        if (!empty($this->db_cache)) {
+            $header = array_keys(reset($this->db_cache));
+        }
+
+        // Extract data rows from each record in the database cache
+        foreach ($this->db_cache as $record) {
+            $data[] = array_values($record);
+        }
+
+        fputcsv($file, $header);
+        foreach ($data as $row) {
+            fputcsv($file, $row);
+        }
+
+        fclose($file);
+
+        return true;
+    }
+
+    public function importCsv($file_path, $has_header_row = true)
+    {
+        if (!file_exists($file_path)) {
+            return false;
+        }
+
+        $file = fopen($file_path, 'r');
+
+        if (!$file) {
+            return false;
+        }
+
+        // Clear existing database cache
+        $this->clearCache();
+
+        $row = 1;
+        while (($data = fgetcsv($file)) !== false) {
+            // Skip the header row if it exists
+            if ($has_header_row && $row === 1) {
+                $row++;
+                continue;
+            }
+
+            $num_fields = count($data);
+            if ($num_fields > 0) {
+                $record = [];
+                for ($i = 0; $i < $num_fields; $i++) {
+                    $record[$i] = $data[$i];
+                }
+                $this->db_cache[] = $record;
+            }
+
+            $row++;
+        }
+
+        fclose($file);
+
+        return true;
+    }
+
+    public function getRecordCount()
+    {
+        return count($this->db_cache);
+    }
+
+    public function getRecordsInRange($start, $end)
+    {
+        if ($end < $start || $start < 0 || $end >= $this->getRecordCount()) {
+            return [];
+        }
+
+        return array_slice($this->db_cache, $start, $end - $start + 1);
+    }
+
+    public function getRandomRecord()
+    {
+        $record_count = $this->getRecordCount();
+        if ($record_count === 0) {
             return null;
         }
-        $array = $array[$k];
+
+        $random_index = rand(0, $record_count - 1);
+        return $this->db_cache[$random_index];
     }
-    return $array;
+
+    public function getRecordById($id)
+    {
+        return $this->issetValue($this->db_cache, $id) ? $this->db_cache[$id] : null;
+    }
+
 }
+
+?>
